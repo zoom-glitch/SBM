@@ -26,21 +26,21 @@
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      background: rgba(0, 0, 0, 0.8); /* زيادة الوضوح */
+      background: rgba(0, 0, 0, 0.8);
       color: white;
       padding: 30px 40px;
       border-radius: 20px;
-      font-size: 42px; /* تصغير طفيف ليلائم الشاشات الصغيرة */
+      font-size: 42px;
       font-weight: bold;
       text-align: center;
       max-width: 90%;
       line-height: 1.5;
       z-index: 10;
-      cursor: pointer; /* لإظهار أن العنصر قابل للنقر */
+      cursor: pointer;
       transition: background-color 0.3s;
     }
     #objects.listening {
-        background-color: rgba(0, 80, 150, 0.9); /* تغيير اللون عند الاستماع */
+        background-color: rgba(0, 80, 150, 0.9);
     }
   </style>
 </head>
@@ -48,25 +48,43 @@
   <video id="video" autoplay muted playsinline></video>
   <div id="objects">📦 جاري تحميل التطبيق...</div>
 
-  <!-- مكتبات الذكاء الاصطناعي -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@2.1.5/dist/tesseract.min.js"></script>
 
   <script>
     const video = document.getElementById("video");
     const objectDiv = document.getElementById("objects");
     let model;
-    let isProcessing = false; // لمنع الأوامر المتداخلة
+    let isProcessing = false;
 
-    // --- إعدادات التعرف على الصوت (الجديدة) ---
+    // قاموس الترجمة المحلي
+    const dictionary = {
+      "person": "راجل أو ست",
+      "bottle": "إزازة",
+      "cup": "كوباية",
+      "cell phone": "موبايل",
+      "laptop": "لاب توب",
+      "remote": "ريموت",
+      "book": "كتاب",
+      "chair": "كرسي",
+      "dog": "كلب",
+      "cat": "قطة",
+      "clock": "ساعة",
+      "tv": "تلفزيون",
+      "refrigerator": "ثلاجة",
+      "keyboard": "كيبورد",
+      "mouse": "ماوس",
+      "backpack": "شنطة",
+      "car": "عربية",
+      "bicycle": "عجلة"
+    };
+
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     let recognition;
-
     if (SpeechRecognition) {
         recognition = new SpeechRecognition();
         recognition.lang = 'ar-EG';
-        recognition.continuous = false; // *** التغيير الأهم: لا تستمر في الاستماع ***
+        recognition.continuous = false;
         recognition.interimResults = false;
     } else {
         objectDiv.innerText = "❌ المتصفح لا يدعم الأوامر الصوتية";
@@ -78,20 +96,14 @@
         video.srcObject = stream;
       } catch (e) {
         objectDiv.innerText = "❌ فشل تشغيل الكاميرا";
-        console.error("Camera error:", e);
       }
     }
 
     async function loadModel() {
-      try {
-        objectDiv.innerText = "📦 جاري تحميل النموذج...";
-        model = await cocoSsd.load();
-        objectDiv.innerText = "✅ جاهز!\nانقر على الشاشة ثم تحدث.";
-        speak("التطبيق جاهز. انقر على الشاشة لإعطاء أمر صوتي.");
-      } catch (e) {
-        objectDiv.innerText = "❌ فشل تحميل النموذج";
-        console.error("Model load error:", e);
-      }
+      objectDiv.innerText = "📦 جاري تحميل النموذج...";
+      model = await cocoSsd.load();
+      objectDiv.innerText = "✅ جاهز!\nانقر على الشاشة ثم تحدث.";
+      speak("التطبيق جاهز. انقر على الشاشة لإعطاء أمر صوتي.");
     }
 
     function getArabicVoice() {
@@ -108,114 +120,64 @@
       speechSynthesis.cancel();
       speechSynthesis.speak(msg);
     }
-    
-    // --- دالة لتشغيل صوت تنبيه ---
-    function playBeep(start = true) {
-        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const oscillator = audioContext.createOscillator();
-        oscillator.type = 'sine';
-        oscillator.frequency.setValueAtTime(start ? 880 : 660, audioContext.currentTime); // تردد مختلف للبداية والنهاية
-        oscillator.connect(audioContext.destination);
-        oscillator.start();
-        oscillator.stop(audioContext.currentTime + 0.1);
+
+    function translateLabel(label) {
+      return dictionary[label] || label;
     }
 
-    // --- الدالات الأساسية بدون تغيير ---
     async function runObjectDetection() {
-        objectDiv.innerText = "🤔 أفكر... ما الذي أراه؟";
-        const predictions = await model.detect(video);
-        const labels = [...new Set(predictions.map(p => p.class))];
-        if (labels.length === 0) return "لا أرى شيئًا واضحًا.";
-        const translatedLabels = await Promise.all(labels.map(async (text) => {
-            try {
-                const res = await fetch(`https://api.mymemory.translated.net/get?q=${text}&langpair=en|ar`);
-                const data = await res.json();
-                return data.responseData.translatedText || text;
-            } catch { return text; }
-        }));
-        const joinWithWa = (list) => list.length === 1 ? list[0] : list.slice(0, -1).join("، ") + " و" + list[list.length - 1];
-        return "أرى أمامك " + joinWithWa(translatedLabels);
+      objectDiv.innerText = "🤔 أفكر... ما الذي أراه؟";
+      const predictions = await model.detect(video);
+      const labels = [...new Set(predictions.map(p => translateLabel(p.class)))];
+      if (labels.length === 0) return "لا أرى شيئًا واضحًا.";
+      const description = labels.length === 1 ? labels[0] : labels.slice(0, -1).join("، ") + " و" + labels[labels.length - 1];
+      return "أرى أمامك " + description;
     }
 
-    async function runTextRecognition() {
-        objectDiv.innerText = "📖 جاري قراءة النص...";
-        const { data: { text } } = await Tesseract.recognize(video, 'eng+ara');
-        const cleanText = text.trim().split("\n").filter(t => t.length > 2).join(" ");
-        return cleanText ? "النص المكتوب هو: " + cleanText : "لم أجد أي نص لأقرأه.";
-    }
-
-    // --- معالج الأوامر الصوتية الجديد ---
     if (recognition) {
-        recognition.onresult = async (event) => {
-            const command = event.results[0][0].transcript.trim().toLowerCase();
-            console.log('تم سماع الأمر:', command);
-            objectDiv.classList.remove('listening');
-            playBeep(false); // صوت نهاية الاستماع
+      recognition.onresult = async (event) => {
+        const command = event.results[0][0].transcript.trim().toLowerCase();
+        objectDiv.classList.remove('listening');
+        let resultMessage = "";
 
-            let resultMessage = "";
-            try {
-                 if (command.includes("ما الذي أمامي") || command.includes("ماذا امامي") || command.includes("شايف ايه")) {
-                    resultMessage = await runObjectDetection();
-                } else if (command.includes("اقرأ") || command.includes("اقرا") || command.includes("مكتوب")) {
-                    resultMessage = await runTextRecognition();
-                } else {
-                    resultMessage = "لم أفهم الأمر. حاول قول 'ما الذي أمامي' أو 'اقرأ النص'.";
-                }
-            } catch(err) {
-                console.error("Processing error:", err);
-                resultMessage = "حدث خطأ أثناء تنفيذ طلبك.";
-            }
+        if (command.includes("ما الذي أمامي") || command.includes("ماذا امامي") || command.includes("شايف ايه")) {
+          resultMessage = await runObjectDetection();
+        } else {
+          resultMessage = "لم أفهم الأمر. قل \"ما الذي أمامي\".";
+        }
 
-            objectDiv.innerText = resultMessage;
-            speak(resultMessage);
-            isProcessing = false; // السماح بأمر جديد
-        };
+        objectDiv.innerText = resultMessage;
+        speak(resultMessage);
+        isProcessing = false;
+      };
 
-        recognition.onerror = (event) => {
-            console.error("Speech recognition error", event.error);
-            objectDiv.innerText = "حدث خطأ في المايكروفون. انقر للمحاولة مجدداً.";
-            objectDiv.classList.remove('listening');
-            isProcessing = false;
-        };
-        
-        recognition.onend = () => {
-            // لا تفعل شيئاً هنا، لن نعيد التشغيل تلقائياً
-            console.log("الاستماع انتهى.");
-            if (!isProcessing) {
-              objectDiv.classList.remove('listening');
-            }
-        };
+      recognition.onerror = () => {
+        objectDiv.innerText = "❌ حدث خطأ في المايكروفون.";
+        objectDiv.classList.remove('listening');
+        isProcessing = false;
+      };
+
+      recognition.onend = () => {
+        objectDiv.classList.remove('listening');
+      };
     }
 
-    // --- دالة جديدة لبدء الاستماع عند الطلب ---
     function listenForCommand() {
-        if (isProcessing || !recognition) return;
-        
-        isProcessing = true;
-        playBeep(true); // صوت بداية الاستماع
-        objectDiv.innerText = "🎤 استمع الآن...";
-        objectDiv.classList.add('listening');
-        
-        try {
-            recognition.start();
-        } catch (e) {
-            console.error("Error starting recognition:", e);
-            objectDiv.innerText = "لا يمكن بدء الاستماع الآن. حاول مرة أخرى.";
-            isProcessing = false;
-            objectDiv.classList.remove('listening');
-        }
+      if (isProcessing || !recognition) return;
+      isProcessing = true;
+      objectDiv.innerText = "🎤 استمع الآن...";
+      objectDiv.classList.add('listening');
+      recognition.start();
     }
 
     async function init() {
       await startCamera();
       await loadModel();
-      // استبدال كل الأحداث السابقة بنقرة واحدة على الشاشة كلها
       document.body.addEventListener("click", listenForCommand);
     }
-    
-    // لضمان تحميل الأصوات العربية
+
     window.addEventListener("load", () => {
-        setTimeout(() => speechSynthesis.getVoices(), 200);
+      setTimeout(() => speechSynthesis.getVoices(), 200);
     });
 
     init();
