@@ -4,11 +4,16 @@
   <meta charset="UTF-8">
   <title>مساعد AI للمكفوفين</title>
   <style>
-    body, html {
+    * {
       margin: 0;
       padding: 0;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
       overflow: hidden;
       font-family: sans-serif;
+      background: black;
     }
     video {
       position: fixed;
@@ -20,25 +25,25 @@
     }
     #objects {
       position: fixed;
-      bottom: 10px;
-      right: 10px;
-      background: rgba(0,0,0,0.6);
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.6);
       color: #00ff00;
-      padding: 10px 15px;
-      border-radius: 10px;
-      font-size: 20px;
-      z-index: 2;
+      padding: 20px 30px;
+      border-radius: 15px;
+      font-size: 28px;
+      text-align: center;
       max-width: 90%;
-      text-align: right;
+      z-index: 2;
     }
   </style>
 </head>
 <body>
 
   <video id="video" autoplay muted playsinline></video>
-  <div id="objects">جاري التحميل...</div>
+  <div id="objects">جاري تحميل النموذج...</div>
 
-  <!-- TensorFlow -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0/dist/tf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
@@ -48,7 +53,6 @@
     let model;
     let lastSaid = "";
 
-    // ✅ فتح الكاميرا الخلفية
     async function startCamera() {
       try {
         const stream = await navigator.mediaDevices.getUserMedia({
@@ -62,7 +66,6 @@
       }
     }
 
-    // ✅ ترجمة فورية باستخدام MyMemory API
     async function translate(text) {
       try {
         const res = await fetch(`https://api.mymemory.translated.net/get?q=${text}&langpair=en|ar`);
@@ -73,39 +76,34 @@
       }
     }
 
-    // ✅ اختيار صوت عربي طبيعي
     function getArabicVoice() {
       const voices = window.speechSynthesis.getVoices();
       return voices.find(v => v.lang.includes("ar") && v.name.includes("Google")) ||
              voices.find(v => v.lang.includes("ar")) || null;
     }
 
-    // ✅ نطق الكلام
     function speak(text) {
       const msg = new SpeechSynthesisUtterance(text);
-      msg.lang = 'ar-EG'; // مصري إن أمكن
+      msg.lang = 'ar-EG';
       msg.voice = getArabicVoice();
-      msg.rate = 1;
+      msg.rate = 0.85; // نطق أبطأ شويه
       window.speechSynthesis.cancel();
       window.speechSynthesis.speak(msg);
     }
 
-    // ✅ التعرف على الأشياء والتحدث
     async function detectObjects() {
       const predictions = await model.detect(video);
       const rawLabels = predictions.map(p => p.class);
       const uniqueLabels = [...new Set(rawLabels)];
 
       if (uniqueLabels.length > 0) {
-        // ترجمة كل الكائنات
         const translated = await Promise.all(uniqueLabels.map(label => translate(label)));
-        const sentence = "شايف: " + translated.join("، ");
-        objectDiv.innerText = sentence;
+        const description = "قدامك: " + translated.join("، ");
+        objectDiv.innerText = description;
 
-        // النطق بس لو الكلام اتغير
-        if (sentence !== lastSaid) {
-          lastSaid = sentence;
-          speak(sentence);
+        if (description !== lastSaid) {
+          lastSaid = description;
+          speak(description);
         }
       } else {
         objectDiv.innerText = "مش شايف حاجة واضحة";
@@ -116,12 +114,11 @@
       await startCamera();
       model = await cocoSsd.load();
       objectDiv.innerText = "ابدأ التعرف...";
-      setInterval(detectObjects, 1000); // كل ثانية
+      setInterval(detectObjects, 4000); // كل 4 ثواني
     }
 
-    // ضروري لتشغيل الأصوات على بعض الأجهزة
     window.addEventListener('click', () => {
-      speechSynthesis.getVoices(); // تحميل الأصوات
+      speechSynthesis.getVoices(); // لتفعيل الأصوات على بعض الأجهزة
     });
 
     init();
