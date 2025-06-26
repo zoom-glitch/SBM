@@ -2,9 +2,9 @@
 <html lang="ar">
 <head>
   <meta charset="UTF-8" />
-  <title>مساعد المكفوفين الذكي بالأوامر الصوتية</title>
+  <title>مساعد المكفوفين الذكي (اضغط وتحدث)</title>
   <style>
-    * { margin: 0; padding: 0; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
       width: 100%;
       height: 100%;
@@ -26,16 +26,21 @@
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      background: rgba(0, 0, 0, 0.7);
+      background: rgba(0, 0, 0, 0.8); /* زيادة الوضوح */
       color: white;
       padding: 30px 40px;
       border-radius: 20px;
-      font-size: 48px;
+      font-size: 42px; /* تصغير طفيف ليلائم الشاشات الصغيرة */
       font-weight: bold;
       text-align: center;
       max-width: 90%;
       line-height: 1.5;
       z-index: 10;
+      cursor: pointer; /* لإظهار أن العنصر قابل للنقر */
+      transition: background-color 0.3s;
+    }
+    #objects.listening {
+        background-color: rgba(0, 80, 150, 0.9); /* تغيير اللون عند الاستماع */
     }
   </style>
 </head>
@@ -52,28 +57,24 @@
     const video = document.getElementById("video");
     const objectDiv = document.getElementById("objects");
     let model;
+    let isProcessing = false; // لمنع الأوامر المتداخلة
 
-    // --- إعدادات التعرف على الصوت ---
+    // --- إعدادات التعرف على الصوت (الجديدة) ---
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     let recognition;
 
-    // التأكد من أن المتصفح يدعم التعرف على الصوت
     if (SpeechRecognition) {
         recognition = new SpeechRecognition();
-        recognition.lang = 'ar-EG'; // اللغة العربية (مصر)
-        recognition.continuous = true; // استمر في الاستماع
+        recognition.lang = 'ar-EG';
+        recognition.continuous = false; // *** التغيير الأهم: لا تستمر في الاستماع ***
         recognition.interimResults = false;
     } else {
         objectDiv.innerText = "❌ المتصفح لا يدعم الأوامر الصوتية";
-        console.error("Speech Recognition not supported.");
     }
 
     async function startCamera() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" },
-          audio: false
-        });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
         video.srcObject = stream;
       } catch (e) {
         objectDiv.innerText = "❌ فشل تشغيل الكاميرا";
@@ -83,9 +84,10 @@
 
     async function loadModel() {
       try {
-        objectDiv.innerText = "📦 جاري تحميل نموذج الذكاء الاصطناعي...";
+        objectDiv.innerText = "📦 جاري تحميل النموذج...";
         model = await cocoSsd.load();
-        objectDiv.innerText = "✅ جاهز! قل 'ما الذي أمامي' أو 'اقرأ النص'.";
+        objectDiv.innerText = "✅ جاهز!\nانقر على الشاشة ثم تحدث.";
+        speak("التطبيق جاهز. انقر على الشاشة لإعطاء أمر صوتي.");
       } catch (e) {
         objectDiv.innerText = "❌ فشل تحميل النموذج";
         console.error("Model load error:", e);
@@ -94,131 +96,126 @@
 
     function getArabicVoice() {
       const voices = speechSynthesis.getVoices();
-      return voices.find(v => v.lang.includes("ar") && v.name.includes("Google")) ||
-             voices.find(v => v.lang.includes("ar")) || null;
+      return voices.find(v => v.lang.includes("ar")) || null;
     }
 
     function speak(text) {
-      // لا تنطق إذا لم يكن هناك نص
       if (!text || text.trim() === "") return;
       const msg = new SpeechSynthesisUtterance(text);
       msg.lang = 'ar-EG';
       msg.voice = getArabicVoice();
       msg.rate = 0.9;
-      speechSynthesis.cancel(); // إيقاف أي كلام حالي
+      speechSynthesis.cancel();
       speechSynthesis.speak(msg);
     }
-
-    function joinWithWa(list) {
-      if (list.length === 0) return "";
-      if (list.length === 1) return list[0];
-      if (list.length === 2) return list[0] + " و" + list[1];
-      return list.slice(0, -1).join("، ") + " و" + list[list.length - 1];
+    
+    // --- دالة لتشغيل صوت تنبيه ---
+    function playBeep(start = true) {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(start ? 880 : 660, audioContext.currentTime); // تردد مختلف للبداية والنهاية
+        oscillator.connect(audioContext.destination);
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.1);
     }
 
-    async function translate(text) {
-      try {
-        const res = await fetch(`https://api.mymemory.translated.net/get?q=${text}&langpair=en|ar`);
-        const data = await res.json();
-        return data.responseData.translatedText || text;
-      } catch {
-        return text;
-      }
-    }
-
-    // --- دالة جديدة للتعرف على الأشياء فقط ---
+    // --- الدالات الأساسية بدون تغيير ---
     async function runObjectDetection() {
-        if (!model) return;
         objectDiv.innerText = "🤔 أفكر... ما الذي أراه؟";
-        try {
-            const predictions = await model.detect(video);
-            const labels = [...new Set(predictions.map(p => p.class))];
-            
-            if (labels.length === 0) {
-                const message = "لا أرى شيئًا واضحًا.";
-                objectDiv.innerText = message;
-                speak(message);
-                return;
-            }
-
-            const translatedLabels = await Promise.all(labels.map(translate));
-            const message = "أرى أمامك " + joinWithWa(translatedLabels);
-            objectDiv.innerText = message;
-            speak(message);
-
-        } catch (err) {
-            console.error("Object detection error:", err);
-            objectDiv.innerText = "❌ حدث خطأ في التعرف على الأشياء.";
-        }
+        const predictions = await model.detect(video);
+        const labels = [...new Set(predictions.map(p => p.class))];
+        if (labels.length === 0) return "لا أرى شيئًا واضحًا.";
+        const translatedLabels = await Promise.all(labels.map(async (text) => {
+            try {
+                const res = await fetch(`https://api.mymemory.translated.net/get?q=${text}&langpair=en|ar`);
+                const data = await res.json();
+                return data.responseData.translatedText || text;
+            } catch { return text; }
+        }));
+        const joinWithWa = (list) => list.length === 1 ? list[0] : list.slice(0, -1).join("، ") + " و" + list[list.length - 1];
+        return "أرى أمامك " + joinWithWa(translatedLabels);
     }
 
-    // --- دالة جديدة لقراءة النصوص فقط ---
     async function runTextRecognition() {
         objectDiv.innerText = "📖 جاري قراءة النص...";
-        try {
-            const canvas = document.createElement("canvas");
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            const ctx = canvas.getContext("2d");
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-            const { data: { text } } = await Tesseract.recognize(canvas, 'eng+ara'); // تم إضافة العربية
-            const cleanText = text.trim().split("\n").filter(t => t.length > 2).join(" ");
-            
-            let message = "";
-            if (cleanText) {
-                message = "النص المكتوب هو: " + cleanText;
-            } else {
-                message = "لم أجد أي نص لأقرأه.";
-            }
-            objectDiv.innerText = message;
-            speak(message);
-
-        } catch (err) {
-            console.error("Text recognition error:", err);
-            objectDiv.innerText = "❌ حدث خطأ في قراءة النص.";
-        }
+        const { data: { text } } = await Tesseract.recognize(video, 'eng+ara');
+        const cleanText = text.trim().split("\n").filter(t => t.length > 2).join(" ");
+        return cleanText ? "النص المكتوب هو: " + cleanText : "لم أجد أي نص لأقرأه.";
     }
-    
-    // --- معالج الأوامر الصوتية ---
+
+    // --- معالج الأوامر الصوتية الجديد ---
     if (recognition) {
-        recognition.onresult = (event) => {
-            const last = event.results.length - 1;
-            const command = event.results[last][0].transcript.trim().toLowerCase();
-            
+        recognition.onresult = async (event) => {
+            const command = event.results[0][0].transcript.trim().toLowerCase();
             console.log('تم سماع الأمر:', command);
-            
-            if (command.includes("ما الذي أمامي") || command.includes("ماذا امامي")) {
-                runObjectDetection();
-            } else if (command.includes("اقرأ") || command.includes("اقرا")) {
-                runTextRecognition();
+            objectDiv.classList.remove('listening');
+            playBeep(false); // صوت نهاية الاستماع
+
+            let resultMessage = "";
+            try {
+                 if (command.includes("ما الذي أمامي") || command.includes("ماذا امامي") || command.includes("شايف ايه")) {
+                    resultMessage = await runObjectDetection();
+                } else if (command.includes("اقرأ") || command.includes("اقرا") || command.includes("مكتوب")) {
+                    resultMessage = await runTextRecognition();
+                } else {
+                    resultMessage = "لم أفهم الأمر. حاول قول 'ما الذي أمامي' أو 'اقرأ النص'.";
+                }
+            } catch(err) {
+                console.error("Processing error:", err);
+                resultMessage = "حدث خطأ أثناء تنفيذ طلبك.";
             }
+
+            objectDiv.innerText = resultMessage;
+            speak(resultMessage);
+            isProcessing = false; // السماح بأمر جديد
+        };
+
+        recognition.onerror = (event) => {
+            console.error("Speech recognition error", event.error);
+            objectDiv.innerText = "حدث خطأ في المايكروفون. انقر للمحاولة مجدداً.";
+            objectDiv.classList.remove('listening');
+            isProcessing = false;
         };
         
-        // إعادة تشغيل الاستماع تلقائيًا إذا توقف
         recognition.onend = () => {
-            console.log("إعادة تشغيل الاستماع...");
-            recognition.start();
+            // لا تفعل شيئاً هنا، لن نعيد التشغيل تلقائياً
+            console.log("الاستماع انتهى.");
+            if (!isProcessing) {
+              objectDiv.classList.remove('listening');
+            }
         };
+    }
+
+    // --- دالة جديدة لبدء الاستماع عند الطلب ---
+    function listenForCommand() {
+        if (isProcessing || !recognition) return;
+        
+        isProcessing = true;
+        playBeep(true); // صوت بداية الاستماع
+        objectDiv.innerText = "🎤 استمع الآن...";
+        objectDiv.classList.add('listening');
+        
+        try {
+            recognition.start();
+        } catch (e) {
+            console.error("Error starting recognition:", e);
+            objectDiv.innerText = "لا يمكن بدء الاستماع الآن. حاول مرة أخرى.";
+            isProcessing = false;
+            objectDiv.classList.remove('listening');
+        }
     }
 
     async function init() {
       await startCamera();
       await loadModel();
-      // إذا تم تحميل كل شيء بنجاح، ابدأ الاستماع للأوامر
-      if (model && recognition) {
-        try {
-          recognition.start();
-          console.log("🎤 الاستماع للأوامر الصوتية بدأ.");
-        } catch(e) {
-          console.error("لم يتمكن من بدء الاستماع، قد يكون بدأ بالفعل", e);
-        }
-      }
+      // استبدال كل الأحداث السابقة بنقرة واحدة على الشاشة كلها
+      document.body.addEventListener("click", listenForCommand);
     }
     
-    // يحتاج المستخدم للنقر مرة واحدة على الشاشة لتفعيل الصوت في بعض المتصفحات
-    window.addEventListener("click", () => {
-      speechSynthesis.getVoices(); 
+    // لضمان تحميل الأصوات العربية
+    window.addEventListener("load", () => {
+        setTimeout(() => speechSynthesis.getVoices(), 200);
     });
 
     init();
