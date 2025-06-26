@@ -1,45 +1,71 @@
 <!DOCTYPE html>
-<html lang="ar">
+<html lang="ar" dir="rtl">
 <head>
-  <meta charset="UTF-8">
-  <title>مساعد المكفوفين الذكي</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>المساعد الذكي للمكفوفين (نسخة مطورة)</title>
+  
+  <!-- استيراد خط عربي حديث -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@700&display=swap" rel="stylesheet">
+
   <style>
-    * { margin: 0; padding: 0; }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
     html, body {
       width: 100%;
       height: 100%;
-      background: black;
-      font-family: 'Arial', sans-serif;
+      background: #111; /* خلفية داكنة في حالة تأخر تحميل الفيديو */
+      font-family: 'Tajawal', sans-serif; /* تطبيق الخط الجديد */
       overflow: hidden;
     }
     video {
       position: fixed;
       top: 0; left: 0;
-      width: 100vw;
-      height: 100vh;
+      width: 100%;
+      height: 100%;
       object-fit: cover;
-      z-index: -1;
+      z-index: 0; /* الفيديو في الخلفية */
+    }
+    #overlay {
+      position: fixed;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+      z-index: 10;
+      cursor: pointer; /* إظهار أن الشاشة قابلة للنقر */
     }
     #objects {
-      position: fixed;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      background: rgba(0,0,0,0.6);
-      color: #00ff00;
-      padding: 25px 35px;
-      border-radius: 15px;
-      font-size: 36px;
+      background: rgba(0, 0, 0, 0.75);
+      color: #00ff7f; /* لون أخضر ساطع (SpringGreen) */
+      padding: 30px 40px;
+      border-radius: 20px;
+      border: 2px solid rgba(0, 255, 127, 0.5);
+      font-size: 38px;
+      font-weight: bold;
       text-align: center;
-      max-width: 90%;
+      max-width: 95%;
       line-height: 1.6;
-      z-index: 2;
+      text-shadow: 0 0 10px rgba(0, 0, 0, 0.7); /* ظل للنص لسهولة القراءة */
+      box-shadow: 0 4px 30px rgba(0, 0, 0, 0.4);
+      backdrop-filter: blur(5px);
+      -webkit-backdrop-filter: blur(5px);
+      transition: all 0.3s ease;
+    }
+    #objects.listening {
+        background-color: rgba(0, 50, 100, 0.8);
+        border-color: rgba(0, 150, 255, 0.8);
     }
   </style>
 </head>
 <body>
   <video id="video" autoplay muted playsinline></video>
-  <div id="objects">جارٍ تحميل النموذج...</div>
+  <div id="overlay">
+      <div id="objects">📦 جاري تحميل التطبيق...</div>
+  </div>
 
   <!-- مكتبات الذكاء الاصطناعي -->
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0"></script>
@@ -49,94 +75,159 @@
   <script>
     const video = document.getElementById("video");
     const objectDiv = document.getElementById("objects");
+    const overlay = document.getElementById("overlay");
     let model;
-    let lastSaid = "";
+    let isProcessing = false;
+
+    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+    let recognition;
+
+    if (SpeechRecognition) {
+        recognition = new SpeechRecognition();
+        recognition.lang = 'ar-EG';
+        recognition.continuous = false;
+        recognition.interimResults = false;
+    } else {
+        objectDiv.innerText = "❌ المتصفح لا يدعم الأوامر الصوتية";
+    }
 
     async function startCamera() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" },
-          audio: false
-        });
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
         video.srcObject = stream;
-      } catch (e) {
-        objectDiv.innerText = "فشل تشغيل الكاميرا";
-      }
+      } catch (e) { objectDiv.innerText = "❌ فشل تشغيل الكاميرا"; console.error("Camera error:", e); }
+    }
+
+    async function loadModel() {
+      try {
+        objectDiv.innerText = "📦 جاري تحميل نموذج الذكاء الاصطناعي...";
+        model = await cocoSsd.load();
+        objectDiv.innerText = "✅ جاهز!\nانقر على الشاشة ثم تحدث.";
+        speak("التطبيق جاهز. انقر على الشاشة لإعطاء أمر صوتي.");
+      } catch (e) { objectDiv.innerText = "❌ فشل تحميل النموذج"; console.error("Model load error:", e); }
+    }
+
+    function getArabicVoice() {
+      const voices = speechSynthesis.getVoices();
+      return voices.find(v => v.lang.includes("ar")) || null;
+    }
+
+    function speak(text) {
+      if (!text || text.trim() === "") return;
+      const msg = new SpeechSynthesisUtterance(text);
+      msg.lang = 'ar-EG';
+      msg.voice = getArabicVoice();
+      msg.rate = 0.95;
+      speechSynthesis.cancel();
+      speechSynthesis.speak(msg);
+    }
+    
+    function playBeep(start = true) {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const oscillator = audioContext.createOscillator();
+        oscillator.type = 'sine';
+        oscillator.frequency.setValueAtTime(start ? 880 : 520, audioContext.currentTime);
+        oscillator.connect(audioContext.destination);
+        oscillator.start();
+        oscillator.stop(audioContext.currentTime + 0.1);
+    }
+
+    function joinWithWa(list) {
+      if (list.length === 0) return "";
+      if (list.length === 1) return list[0];
+      if (list.length === 2) return list[0] + " و" + list[1];
+      return list.slice(0, -1).join("، ") + "، و" + list[list.length - 1];
     }
 
     async function translate(text) {
       try {
         const res = await fetch(`https://api.mymemory.translated.net/get?q=${text}&langpair=en|ar`);
         const data = await res.json();
-        return data.responseData.translatedText || text;
-      } catch {
-        return text;
-      }
+        return data.responseData.translatedText.toLowerCase() || text;
+      } catch { return text; }
     }
 
-    function getArabicVoice() {
-      const voices = speechSynthesis.getVoices();
-      return voices.find(v => v.lang.includes("ar") && v.name.includes("Google")) ||
-             voices.find(v => v.lang.includes("ar")) || null;
+    // --- وظيفة التعرف على الأشياء فقط ---
+    async function runObjectDetection() {
+        objectDiv.innerText = "🤔 ماذا أرى أمامي؟...";
+        const predictions = await model.detect(video);
+        const labels = [...new Set(predictions.map(p => p.class))];
+        
+        if (labels.length === 0) {
+            return "لا أرى شيئًا واضحًا.";
+        }
+        const translatedLabels = await Promise.all(labels.map(translate));
+        return "أرى أمامك " + joinWithWa(translatedLabels) + ".";
     }
 
-    function speak(text) {
-      const msg = new SpeechSynthesisUtterance(text);
-      msg.lang = 'ar-EG';
-      msg.voice = getArabicVoice();
-      msg.rate = 0.85;
-      speechSynthesis.cancel();
-      speechSynthesis.speak(msg);
+    // --- وظيفة قراءة النصوص فقط ---
+    async function runTextRecognition() {
+        objectDiv.innerText = "📖 جاري قراءة النص...";
+        const { data: { text } } = await Tesseract.recognize(video, 'eng+ara');
+        const cleanText = text.trim().replace(/\n/g, ' ').replace(/\s+/g, ' ').trim();
+        
+        return cleanText ? "النص المكتوب هو: " + cleanText : "لم أجد أي نص لأقرأه.";
     }
 
-    function joinWithWa(list) {
-      if (list.length === 1) return list[0];
-      if (list.length === 2) return list[0] + " و" + list[1];
-      return list.slice(0, -1).join("، ") + " و" + list[list.length - 1];
+    if (recognition) {
+        recognition.onresult = async (event) => {
+            const command = event.results[0][0].transcript.trim().toLowerCase();
+            console.log('تم سماع الأمر:', command);
+            objectDiv.classList.remove('listening');
+            playBeep(false);
+
+            let resultMessage = "";
+            try {
+                 if (command.includes("ماذا أمامي") || command.includes("ما الذي أمامي") || command.includes("شايف ايه")) {
+                    resultMessage = await runObjectDetection();
+                } else if (command.includes("اقرأ") || command.includes("اقرا") || command.includes("مكتوب ايه")) {
+                    resultMessage = await runTextRecognition();
+                } else {
+                    resultMessage = "لم أفهم الأمر. قل 'ماذا أمامي' أو 'اقرأ النص'.";
+                }
+            } catch(err) {
+                console.error("Processing error:", err);
+                resultMessage = "حدث خطأ أثناء تنفيذ طلبك.";
+            }
+
+            objectDiv.innerText = resultMessage;
+            speak(resultMessage);
+            isProcessing = false;
+        };
+
+        recognition.onerror = (event) => {
+            console.error("Speech recognition error", event.error);
+            objectDiv.innerText = "حدث خطأ في المايكروفون.\nانقر للمحاولة مجدداً.";
+            objectDiv.classList.remove('listening');
+            isProcessing = false;
+        };
     }
 
-    async function detectObjectsAndText() {
-      const predictions = await model.detect(video);
-      const labels = [...new Set(predictions.map(p => p.class))];
-      const translatedLabels = await Promise.all(labels.map(translate));
-
-      const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      const ctx = canvas.getContext("2d");
-      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-      const { data: { text } } = await Tesseract.recognize(canvas, 'eng');
-      const cleanText = text.trim().split("\n").filter(t => t.length > 2).join("، ");
-      let fullText = "";
-
-      if (translatedLabels.length > 0) {
-        fullText = "قدامك " + joinWithWa(translatedLabels);
-      }
-      if (cleanText) {
-        fullText += (fullText ? "، " : "") + "ومكتوب: " + cleanText;
-      }
-
-      if (!fullText) {
-        fullText = "مش شايف حاجة واضحة";
-      }
-
-      objectDiv.innerText = fullText;
-      if (fullText !== lastSaid) {
-        lastSaid = fullText;
-        speak(fullText);
-      }
+    function listenForCommand() {
+        if (isProcessing || !recognition) return;
+        
+        isProcessing = true;
+        playBeep(true);
+        objectDiv.innerText = "🎤 استمع الآن...";
+        objectDiv.classList.add('listening');
+        
+        try {
+            recognition.start();
+        } catch (e) {
+            isProcessing = false;
+            objectDiv.classList.remove('listening');
+            console.error("Error starting recognition:", e);
+        }
     }
 
     async function init() {
       await startCamera();
-      model = await cocoSsd.load();
-      objectDiv.innerText = "ابدأ التحرك قدام الكاميرا...";
-      setInterval(detectObjectsAndText, 5000); // كل 5 ثواني
+      await loadModel();
+      overlay.addEventListener("click", listenForCommand);
     }
-
-    window.addEventListener("click", () => {
-      speechSynthesis.getVoices(); // تحميل الأصوات
+    
+    window.addEventListener("load", () => {
+        setTimeout(() => speechSynthesis.getVoices(), 200);
     });
 
     init();
