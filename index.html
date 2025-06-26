@@ -2,9 +2,11 @@
 <html lang="ar">
 <head>
   <meta charset="UTF-8" />
-  <title>مساعد المكفوفين الذكي (اضغط وتحدث)</title>
+  <title>مساعد المكفوفين الذكي</title>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
+    * {
+      margin: 0; padding: 0;
+    }
     html, body {
       width: 100%;
       height: 100%;
@@ -26,158 +28,122 @@
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      background: rgba(0, 0, 0, 0.8);
-      color: white;
+      background: rgba(0, 0, 0, 0.7);
+      color: #ffffff;
       padding: 30px 40px;
       border-radius: 20px;
-      font-size: 42px;
+      font-size: 48px;
       font-weight: bold;
       text-align: center;
       max-width: 90%;
       line-height: 1.5;
       z-index: 10;
-      cursor: pointer;
-      transition: background-color 0.3s;
-    }
-    #objects.listening {
-        background-color: rgba(0, 80, 150, 0.9);
+      user-select: none;
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      -ms-user-select: none;
     }
   </style>
 </head>
 <body>
   <video id="video" autoplay muted playsinline></video>
-  <div id="objects">📦 جاري تحميل التطبيق...</div>
+  <div id="objects">جارٍ تحميل النموذج...</div>
 
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0"></script>
   <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@2.1.5/dist/tesseract.min.js"></script>
 
   <script>
     const video = document.getElementById("video");
     const objectDiv = document.getElementById("objects");
     let model;
-    let isProcessing = false;
-
-    // قاموس الترجمة المحلي
-    const dictionary = {
-      "person": "راجل أو ست",
-      "bottle": "إزازة",
-      "cup": "كوباية",
-      "cell phone": "موبايل",
-      "laptop": "لاب توب",
-      "remote": "ريموت",
-      "book": "كتاب",
-      "chair": "كرسي",
-      "dog": "كلب",
-      "cat": "قطة",
-      "clock": "ساعة",
-      "tv": "تلفزيون",
-      "refrigerator": "ثلاجة",
-      "keyboard": "كيبورد",
-      "mouse": "ماوس",
-      "backpack": "شنطة",
-      "car": "عربية",
-      "bicycle": "عجلة"
-    };
-
-    const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    let recognition;
-    if (SpeechRecognition) {
-        recognition = new SpeechRecognition();
-        recognition.lang = 'ar-EG';
-        recognition.continuous = false;
-        recognition.interimResults = false;
-    } else {
-        objectDiv.innerText = "❌ المتصفح لا يدعم الأوامر الصوتية";
-    }
+    let lastSaid = "";
 
     async function startCamera() {
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: "environment" },
+          audio: false
+        });
         video.srcObject = stream;
       } catch (e) {
-        objectDiv.innerText = "❌ فشل تشغيل الكاميرا";
+        objectDiv.innerText = "فشل تشغيل الكاميرا";
       }
     }
 
-    async function loadModel() {
-      objectDiv.innerText = "📦 جاري تحميل النموذج...";
-      model = await cocoSsd.load();
-      objectDiv.innerText = "✅ جاهز!\nانقر على الشاشة ثم تحدث.";
-      speak("التطبيق جاهز. انقر على الشاشة لإعطاء أمر صوتي.");
+    async function translate(text) {
+      try {
+        const res = await fetch(`https://api.mymemory.translated.net/get?q=${text}&langpair=en|ar`);
+        const data = await res.json();
+        return data.responseData.translatedText || text;
+      } catch {
+        return text;
+      }
     }
 
     function getArabicVoice() {
       const voices = speechSynthesis.getVoices();
-      return voices.find(v => v.lang.includes("ar")) || null;
+      return voices.find(v => v.lang.includes("ar") && v.name.includes("Google")) ||
+             voices.find(v => v.lang.includes("ar")) || null;
     }
 
     function speak(text) {
-      if (!text || text.trim() === "") return;
       const msg = new SpeechSynthesisUtterance(text);
       msg.lang = 'ar-EG';
       msg.voice = getArabicVoice();
-      msg.rate = 0.9;
+      msg.rate = 0.85;
       speechSynthesis.cancel();
       speechSynthesis.speak(msg);
     }
 
-    function translateLabel(label) {
-      return dictionary[label] || label;
+    function joinWithWa(list) {
+      if (list.length === 1) return list[0];
+      if (list.length === 2) return list[0] + " و" + list[1];
+      return list.slice(0, -1).join("، ") + " و" + list[list.length - 1];
     }
 
-    async function runObjectDetection() {
-      objectDiv.innerText = "🤔 أفكر... ما الذي أراه؟";
+    async function detectObjectsAndText() {
       const predictions = await model.detect(video);
-      const labels = [...new Set(predictions.map(p => translateLabel(p.class)))];
-      if (labels.length === 0) return "لا أرى شيئًا واضحًا.";
-      const description = labels.length === 1 ? labels[0] : labels.slice(0, -1).join("، ") + " و" + labels[labels.length - 1];
-      return "أرى أمامك " + description;
-    }
+      const labels = [...new Set(predictions.map(p => p.class))];
+      const translatedLabels = await Promise.all(labels.map(translate));
 
-    if (recognition) {
-      recognition.onresult = async (event) => {
-        const command = event.results[0][0].transcript.trim().toLowerCase();
-        objectDiv.classList.remove('listening');
-        let resultMessage = "";
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext("2d");
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
-        if (command.includes("ما الذي أمامي") || command.includes("ماذا امامي") || command.includes("شايف ايه")) {
-          resultMessage = await runObjectDetection();
-        } else {
-          resultMessage = "لم أفهم الأمر. قل \"ما الذي أمامي\".";
-        }
+      const { data: { text } } = await Tesseract.recognize(canvas, 'eng');
+      const cleanText = text.trim().split("\n").filter(t => t.length > 2).join("، ");
+      let fullText = "";
 
-        objectDiv.innerText = resultMessage;
-        speak(resultMessage);
-        isProcessing = false;
-      };
+      if (translatedLabels.length > 0) {
+        fullText = "قدامك " + joinWithWa(translatedLabels);
+      }
+      if (cleanText) {
+        fullText += (fullText ? "، " : "") + "ومكتوب: " + cleanText;
+      }
 
-      recognition.onerror = () => {
-        objectDiv.innerText = "❌ حدث خطأ في المايكروفون.";
-        objectDiv.classList.remove('listening');
-        isProcessing = false;
-      };
+      if (!fullText) {
+        fullText = "مش شايف حاجة واضحة";
+      }
 
-      recognition.onend = () => {
-        objectDiv.classList.remove('listening');
-      };
-    }
-
-    function listenForCommand() {
-      if (isProcessing || !recognition) return;
-      isProcessing = true;
-      objectDiv.innerText = "🎤 استمع الآن...";
-      objectDiv.classList.add('listening');
-      recognition.start();
+      objectDiv.innerText = fullText;
+      if (fullText !== lastSaid) {
+        lastSaid = fullText;
+        speak(fullText);
+      }
     }
 
     async function init() {
       await startCamera();
-      await loadModel();
-      document.body.addEventListener("click", listenForCommand);
+      model = await cocoSsd.load();
+      objectDiv.innerText = "ابدأ التحرك قدام الكاميرا...";
+      setInterval(detectObjectsAndText, 3000); // كل 3 ثواني
     }
 
-    window.addEventListener("load", () => {
-      setTimeout(() => speechSynthesis.getVoices(), 200);
+    window.addEventListener("click", () => {
+      speechSynthesis.getVoices(); // تحميل الأصوات
     });
 
     init();
