@@ -1,75 +1,112 @@
-<!-- index.html - الموقع الأول -->
 <!DOCTYPE html>
-<html lang="ar" dir="rtl">
+<html lang="ar">
 <head>
   <meta charset="UTF-8">
-  <title>نشر خبر</title>
+  <title>مساعد ذكاء اصطناعي للمكفوفين</title>
   <style>
     body {
-      font-family: sans-serif;
-      background-color: #f5f5f5;
-      padding: 20px;
+      background: #111;
+      color: #0f0;
+      font-family: 'Arial', sans-serif;
       text-align: center;
+      direction: rtl;
     }
-    textarea, input {
-      width: 90%;
+    h1 {
+      margin-top: 20px;
+    }
+    video {
+      width: 100%;
+      max-width: 480px;
+      margin-top: 20px;
+      border: 3px solid #0f0;
+      border-radius: 10px;
+    }
+    #objects {
+      margin-top: 20px;
+      font-size: 22px;
       padding: 10px;
-      margin: 10px 0;
-      font-size: 16px;
-    }
-    button {
-      padding: 10px 20px;
-      font-size: 18px;
-      background-color: #2196F3;
-      color: white;
-      border: none;
-      cursor: pointer;
     }
   </style>
 </head>
 <body>
+  <h1>مساعد الذكاء الاصطناعي للمكفوفين</h1>
+  <video id="video" autoplay muted playsinline></video>
+  <div id="objects">جاري تحميل النموذج...</div>
 
-  <h1>📤 نشر خبر جديد</h1>
-  <form id="uploadForm">
-    <textarea id="description" placeholder="اكتب وصف الخبر هنا..." required></textarea><br>
-    <input type="text" id="imageUrl" placeholder="رابط الصورة (من الإنترنت)" required><br>
-    <button type="submit">نشر</button>
-  </form>
+  <!-- TensorFlow + نموذج الذكاء الاصطناعي -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-app.js";
-    import { getDatabase, push, ref as dbRef, set } from "https://www.gstatic.com/firebasejs/11.9.1/firebase-database.js";
+  <script>
+    const video = document.getElementById('video');
+    const objectDiv = document.getElementById('objects');
+    let model;
+    let lastSpoken = '';
 
-    const firebaseConfig = {
-      apiKey: "AIzaSyAjE-2q6PONBkCin9ZN22gDp9Q8pAH9ZW8",
-      authDomain: "story-97cf7.firebaseapp.com",
-      databaseURL: "https://story-97cf7-default-rtdb.firebaseio.com",
-      projectId: "story-97cf7",
-      storageBucket: "story-97cf7.appspot.com",
-      messagingSenderId: "742801388214",
-      appId: "1:742801388214:web:32a305a8057b0582c5ec17",
-      measurementId: "G-9DPPWX7CF0"
-    };
-
-    const app = initializeApp(firebaseConfig);
-    const db = getDatabase(app);
-
-    document.getElementById("uploadForm").addEventListener("submit", async (e) => {
-      e.preventDefault();
-
-      const description = document.getElementById("description").value;
-      const imageUrl = document.getElementById("imageUrl").value;
-
-      const newPostRef = push(dbRef(db, "posts"));
-      await set(newPostRef, {
-        description,
-        imageUrl
+    // ✅ تشغيل الكاميرا الخلفية
+    async function startCamera() {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { exact: "environment" } },
+        audio: false
       });
+      video.srcObject = stream;
+    }
 
-      alert("✅ تم نشر الخبر!");
-      document.getElementById("uploadForm").reset();
-    });
+    // ✅ الترجمة التلقائية للغة العربية بدون API Key
+    async function translate(label) {
+      try {
+        const res = await fetch(`https://api.mymemory.translated.net/get?q=${label}&langpair=en|ar`);
+        const data = await res.json();
+        return data.responseData.translatedText || label;
+      } catch (e) {
+        return label; // fallback لو فشل الاتصال
+      }
+    }
+
+    // ✅ النطق بالصوت
+    function speak(text) {
+      if ('speechSynthesis' in window) {
+        const msg = new SpeechSynthesisUtterance(text);
+        msg.lang = 'ar-SA';
+        msg.rate = 1;
+        window.speechSynthesis.cancel(); // يلغي أي صوت شغال قبل
+        window.speechSynthesis.speak(msg);
+      }
+    }
+
+    // ✅ التعرف على الأشياء والترجمة والنطق
+    async function detectObjects() {
+      const predictions = await model.detect(video);
+      const labels = await Promise.all(predictions.map(async p => await translate(p.class)));
+      const uniqueLabels = [...new Set(labels)];
+
+      if (uniqueLabels.length > 0) {
+        const description = "تم التعرف على: " + uniqueLabels.join(" - ");
+        objectDiv.innerText = description;
+
+        if (description !== lastSpoken) {
+          lastSpoken = description;
+          speak(description);
+        }
+      } else {
+        objectDiv.innerText = "لم يتم التعرف على شيء...";
+      }
+    }
+
+    // ✅ البداية
+    async function init() {
+      try {
+        await startCamera();
+        model = await cocoSsd.load();
+        objectDiv.innerText = "جاري التحليل...";
+        setInterval(detectObjects, 5000);
+      } catch (e) {
+        objectDiv.innerText = "حدث خطأ في تشغيل الكاميرا أو النموذج.";
+        console.error(e);
+      }
+    }
+
+    init();
   </script>
-
 </body>
-</html>
+</html>طط
